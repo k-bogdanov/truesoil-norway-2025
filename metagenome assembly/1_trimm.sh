@@ -10,7 +10,7 @@
 #SBATCH --output /nesi/.../logs/%x_%A_%a.out
 #SBATCH --error /nesi/.../logs/%x_%A_%a.err
 
-# Modules
+# Load modules
 module load Java
 module load BBMap
 module load Trimmomatic/0.39-Java-1.8.0_144
@@ -38,4 +38,5 @@ trimmomatic PE -threads 16 -phred33 \
     ${OUTDIR}/${SAMPLE}_R1_clean.fastq.gz ${OUTDIR}/${SAMPLE}_R1_unpaired.fastq.gz \
     ${OUTDIR}/${SAMPLE}_R2_clean.fastq.gz ${OUTDIR}/${SAMPLE}_R2_unpaired.fastq.gz \
     ILLUMINACLIP:${ADAPTERS}:1:25:7 SLIDINGWINDOW:4:30 MINLEN:80
+
 

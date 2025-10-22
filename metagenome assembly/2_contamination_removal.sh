@@ -1,5 +1,5 @@
 
-# Modules
+# Load modules
 module load Java
 module load BBMap
 module load Trimmomatic/0.39-Java-1.8.0_144
@@ -31,4 +31,5 @@ bbmerge-auto.sh \
     outu1=${OUTDIR}/${SAMPLE}_unmerged_R1.fastq.gz \
     outu2=${OUTDIR}/${SAMPLE}_unmerged_R2.fastq.gz \
     t=16 prealloc rem k=5 extend2=50 ecct -Xmx48g
+
 

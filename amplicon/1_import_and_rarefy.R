@@ -15,10 +15,10 @@ theme_norway <- theme_minimal() +
 set.seed(12358)
 
 # import ps objects
-Norway_16S_ps <- readRDS("C:/Users/bogda/Documents/PhD/TRUESOIL/molecular_data/2025/phyloseqs/ps_Norway_16S.rds") %>%
+Norway_16S_ps <- readRDS("~/ps_Norway_16S.rds") %>%
   name_na_taxa(na_label = "Unidentified <tax> (<rank>)")
 
-Norway_ITS_ps <- readRDS("C:/Users/bogda/Documents/PhD/TRUESOIL/molecular_data/2025/phyloseqs/ps_Norway_ITS.rds") %>%
+Norway_ITS_ps <- readRDS("~/ps_Norway_ITS.rds") %>%
   name_na_taxa(na_label = "Unidentified <tax> (<rank>)")
 
 
@@ -31,3 +31,4 @@ Norway_ITS_ps_r <- rarefy_even_depth(Norway_ITS_ps, 5000, rngseed = TRUE)
 
 # pull metadata
 Norway_metadata <- data.frame(sample_data(Norway_16S_ps_r))
+

@@ -93,10 +93,11 @@ greening_hits_filt <- greening_hits %>%
                                       "Phototrophy",
                                       "Other"))) %>%
   mutate(original_n_reads = case_when( # original number of reads
-    sample == "A-K" ~ 75760010, # old 55178250
+    sample == "A-K" ~ 75760010,
     sample == "G-K" ~ 76954132,
     sample == "H-K" ~ 71900346,
     sample == "E-K" ~ 71605938,
-    sample == "B-K" ~ 83080025 # old 56645966
+    sample == "B-K" ~ 83080025
   ))
+
 

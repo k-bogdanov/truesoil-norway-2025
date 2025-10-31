@@ -19,9 +19,26 @@ gene_renames <- c(
   "Isoprene monooxygenase subunit \\(A\\)" = "Isoprene monooxygenase alpha-subunit (isoA)"
 )
 
+# define filtering parameters
+pident_50 <- c("ATP-citrate lyase (AclB)", "Acetyl CoA synthase (AcsB)", "Arsenate reductase (ArsC)", "Cytochrome cbb3 oxidase (CcoN)",
+               "Cytochrome aa3 oxidase (CoxA)", "Iron oxidising cytochrome (Cyc2)", "Cytochrome bd oxidase (CydA)", "Cytochrome bo3 oxidase (CyoA)",
+               "Flavocytochrome c sulfide dehydrogenase (FCC)", "Formate dehydrogenase (FdhA)", "Malonyl-CoA reductase (Mcr)",
+               "Decaheme iron reductase (MtrB)", "Periplasmic nitrate reductase (NapA)", "Dissimilatory nitrate reductase (NarG)",
+               "NiFe (hydrogenase)", "Nitrogenase (NifH)", "Copper containing nitrite reductase (NirK)", "Cytochrome cd1 nitrite reductase (NirS)",
+               "Nitric oxide reductase (NorB)", "Nitrous oxide reductase (NosZ)", "Ammonia-forming nitrite reductase (NrfA)",
+               "Microbial rhodopsin (RHO)", "Reductive dehalogenase (RdhA)", "Cytochrome cbb3 oxidase (CcoN)", "Fumarate reductase (FrdA)",
+               "Succinate dehydrogenase (SdhA)", "Thiosulfohydrolase (SoxB)", "Sulfide quinone oxidoreductase (Sqr)")
+
+pident_60 <- c("Ammonia monooxygenase (amoA)", "Carbon monoxide dehydrogenase (CoxL)", "FeFe (hydrogenase)", "NADH-ubiquinone oxidoreductase (NuoF)",
+               "Nitrite oxidoreductase (NxrA)", "Rubisco (RbcL)")
+
+pident_70 <- c("Arsenite oxidase (ARO)", "F-type ATP synthase (AtpA)", "Isoprene monooxygenase alpha-subunit (isoA)",
+               "Photosystem II reaction centre (PsbA)", "Selenate reductase (YgfK)")
+
+pident_80 <- c("Thaumarchaeota 4-hydroxybutyryl-CoA synthetase (HbsT)", "Photosystem I reaction centre (PsaA)")
+
 # filter, assign plot IDs, rename genes, cluster them
 greening_hits_filt <- greening_hits %>%
-  filter(pident >= 60, length >= 40, evalue <= 1e-5) %>%
   mutate(sample = str_replace_all(sample, plotIDs),
          sample = factor(sample, levels = c("A-K", "B-K", "E-K", "G-K", "H-K"))) %>%
   mutate(database_clean = database %>%
@@ -30,6 +47,12 @@ greening_hits_filt <- greening_hits %>%
            str_replace("(.*) ([^ ]+)$", "\\1 (\\2)") %>%
            str_replace_all(gene_renames) %>%
            str_trim()) %>%
+ filter(
+    (database_clean %in% pident_50 & pident >= 50 & length >= 40 & evalue <= 1e-10) |
+    (database_clean %in% pident_60 & pident >= 60 & length >= 40 & evalue <= 1e-10) |
+    (database_clean %in% pident_70 & pident >= 70 & length >= 40 & evalue <= 1e-10) |
+    (database_clean %in% pident_80 & pident >= 80 & length >= 40 & evalue <= 1e-10)
+  ) %>%
   mutate(category = case_when(
     # aerobic respiration
     database_clean %in% c("Cytochrome aa3 oxidase (CoxA)",
@@ -99,5 +122,6 @@ greening_hits_filt <- greening_hits %>%
     sample == "E-K" ~ 71605938,
     sample == "B-K" ~ 83080025
   ))
+
 
 

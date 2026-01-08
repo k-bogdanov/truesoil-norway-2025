@@ -1,0 +1,1843 @@
+---
+title: "13C_partitioning"
+author: "Sigrid Trier Kjær"
+date: "2024-12-10"
+output: html_document
+---
+
+```{r}
+
+library(readxl)
+library(dplyr)
+library(writexl)
+library(ggplot2)
+library(lubridate)
+library(broom)
+library(purrr)
+library(tidyr)
+library(ggpmisc)
+library(viridis)
+library(factoextra)
+library(ggcorrplot)
+library(patchwork)
+library(reshape2)
+library(ggnewscale)
+library(ggpubr)
+library(stringr)
+library(car)
+library(agricolae)
+library(emmeans)
+library(scales)
+library(lme4)
+library(lmerTest)
+library(showtext)
+font_add_google("Roboto", "roboto")
+showtext_auto()  # Enable showtext for rendering
+showtext_opts(dpi = 1000)
+Sys.setlocale("LC_TIME", "en_GB.UTF-8")
+
+setwd("xxx")
+
+
+
+
+```
+
+
+#Update xxx with your own file path 
+```{r}
+
+# Path to your Excel file
+file_path <- "xxx/13C_partitioning.xlsx"
+
+# Get all sheet names
+sheet_names <- excel_sheets(file_path)
+
+# Initialize an empty data frame to store combined data
+CO2_13C <- data.frame()
+
+# Define the initial times for each range of No
+initial_time_1 <- ymd_hm("2024-04-26 12:30")  # For No 1-32
+initial_time_2 <- ymd_hm("2024-04-26 16:48")  # For No 33-64
+initial_time_3 <- ymd_hm("2024-04-26 21:03")  # For No 65-96
+
+# Loop through each sheet
+for (sheet in sheet_names) {
+  # Read the first 9 columns of the current sheet
+  df <- read_excel(file_path, sheet = sheet, range = cell_cols(1:11))
+
+  # Add a new column with the sheet name (converted to date)
+  df <- df %>% mutate(Date = as.Date(sheet, format = "%Y%m%d"))
+
+  # Ensure the 'hours' and 'No' columns are numeric
+  df <- df %>% mutate(
+    hours = as.numeric(hours),
+    No = as.numeric(No)
+  )
+
+  # Replace NA or invalid values in 'hours' with 0 (or handle them appropriately)
+  df <- df %>% mutate(hours = ifelse(is.na(hours), 0, hours))
+
+  # Assign the appropriate initial time based on the 'No' column
+  df <- df %>% mutate(
+    InitialTime = case_when(
+      No >= 1 & No <= 32 ~ initial_time_1,
+      No >= 33 & No <= 64 ~ initial_time_2,
+      No >= 65 & No <= 96 ~ initial_time_3,
+      TRUE ~ NA_POSIXct_  # Handle cases where No is outside the defined range
+    )
+  )
+
+  # Calculate the precise DateTime using fractional hours
+  df <- df %>% mutate(DateTime = InitialTime + dhours(hours))
+
+  # Bind the data to the combined data frame
+  CO2_13C <- bind_rows(CO2_13C, df)
+}
+
+
+
+# Arrange data by No and Date to ensure accumulation happens in the correct order
+CO2_13C <- CO2_13C %>%
+  arrange(No, Date)
+
+# Create accumulated columns
+CO2_13C <- CO2_13C %>%
+  group_by(No) %>%
+  mutate(
+    CO2_from_litter_cumsum = cumsum(CO2_from_litter),
+    CO2_from_soil_cumsum = cumsum(CO2_from_soil),
+    CO2_from_total_cumsum = cumsum(`CO2_µmol/g_dw`)
+  ) %>%
+  ungroup()
+
+
+#Make a dataset with only the final cumsum values 
+final_cumsum_CO2_13C <- CO2_13C %>% 
+  filter(hours >= 4000) #%>%
+  # select(No, ID, hours, CO2_from_litter_cumsum, CO2_from_soil_cumsum, CO2_from_total_cumsum, `Distance from top (m)`)
+
+#write_xlsx(final_cumsum_CO2_13C, "xxx/final_cumsum_CO2_13C.xlsx")
+
+
+
+CO2_13C_average <- CO2_13C %>%
+  group_by(ID, Date) %>%  # Group by ID and Date
+  summarise(
+    avg_CO2_from_litter = mean(CO2_from_litter_cumsum, na.rm = TRUE),
+    sd_CO2_from_litter = sd(CO2_from_litter_cumsum, na.rm = TRUE),
+    avg_CO2_from_soil = mean(CO2_from_soil_cumsum, na.rm = TRUE),
+    sd_CO2_from_soil = sd(CO2_from_soil_cumsum, na.rm = TRUE),
+    avg_CO2_from_total = mean(CO2_from_total_cumsum, na.rm = TRUE),
+    sd_CO2_from_total = sd(CO2_from_total_cumsum, na.rm = TRUE),
+    DateTime = min(DateTime, na.rm = TRUE),  # Get the first DateTime in the group
+    InitialTime = min(InitialTime, na.rm = TRUE),
+    days = mean(hours)/24,
+    .groups = 'drop'  # This removes grouping after summarizing
+  )
+
+# Convert Date to a numeric variable (days since start)
+CO2_13C <- CO2_13C %>%
+  mutate(days_since_start = as.numeric(DateTime - InitialTime))
+
+# Ensure ID is a factor
+CO2_13C_average$ID <- as.factor(CO2_13C_average$ID)
+
+# View the summary statistics
+print(CO2_13C_average)
+
+
+
+```
+
+
+
+
+#% litter derived C
+```{r}
+#Import file 
+file_path_litter <- "xxx/POM_MOM_E171.xlsx"
+Litter_derived <- read_excel(file_path_litter)
+
+#caluculate percent 
+Litter_derived <- Litter_derived %>%
+  group_by(`Sample ID`) %>%
+  mutate(
+    Percent_litter_derived_bulk = `Litter derived bulk mg C g dw-1`/`Litter added in begining mg C g dw-1`*100,
+    Percent_litter_derived_MOM = `Litter derived MOM mg C g dw-1`/`Litter added in begining mg C g dw-1`*100,
+    Percent_litter_derived_POM = `Litter derived POM mg C g dw-1`/`Litter added in begining mg C g dw-1`*100,
+    Percent_litter_derived_CO2 = -(`Litter derived CO2 mg C g dw-1`/`Litter added in begining mg C g dw-1`*100),
+    Percent_litter_derived_total = -(Percent_litter_derived_CO2) + Percent_litter_derived_MOM + Percent_litter_derived_POM,
+    Clay_and_silt = `Clay<0,002`+`Silt(0,002-0,06)`,
+    MAOM_formation_efficiency = `Litter derived MOM mg C g dw-1` / (`Litter derived MOM mg C g dw-1` + `Litter derived CO2 mg C g dw-1`)
+  ) %>%
+  ungroup()
+
+
+
+Litter_derived_average <- Litter_derived %>%
+  group_by(`Plot ID`) %>%  # Group by ID and Date
+  summarise(
+    Percent_litter_derived_MOM_avg = mean(Percent_litter_derived_MOM, na.rm = TRUE),
+    Percent_litter_derived_MOM_sd = sd(Percent_litter_derived_MOM, na.rm = TRUE),
+    Percent_litter_derived_POM_avg = mean(Percent_litter_derived_POM, na.rm = TRUE),
+    Percent_litter_derived_POM_sd = sd(Percent_litter_derived_POM, na.rm = TRUE),
+    Percent_litter_derived_CO2_avg = -mean(Percent_litter_derived_CO2, na.rm = TRUE),
+    Percent_litter_derived_CO2_sd = sd(Percent_litter_derived_CO2, na.rm = TRUE), 
+    CO2_total_avg = mean(`Total CO2 mg C g dw-1`, na.rm = TRUE),
+    CO2_total_sd = sd(`Total CO2 mg C g dw-1`, na.rm = TRUE),
+    CO2_litter_derived_avg = mean(`Litter derived CO2 mg C g dw-1`, na.rm = TRUE),
+    CO2_litter_derived_sd = sd(`Litter derived CO2 mg C g dw-1`, na.rm = TRUE),
+    CO2_soil_derived_avg = mean(`Soil derived CO2 mg C g dw-1`, na.rm = TRUE),
+    CO2_soil_derived_sd = sd(`Soil derived CO2 mg C g dw-1`, na.rm = TRUE),
+    `Distance from top (m)` = mean(`Distance from top (m)`),
+    MAOM_formation_efficiency_avg = mean(MAOM_formation_efficiency),
+    MAOM_formation_efficiency_sd = sd(MAOM_formation_efficiency),
+    Bulk_C_mg_g_dw_start = mean(Bulk_C_mg_g_dw_start),
+    `Clay<0,002` = mean(`Clay<0,002`),
+    MOM_C_mg_g_soil_end = mean(MOM_C_mg_g_soil_end),
+    Percent_total = (Percent_litter_derived_MOM_avg + Percent_litter_derived_POM_avg + -(Percent_litter_derived_CO2_avg))
+  )
+
+
+# Pivot the average values
+litter_avg <- Litter_derived_average %>%
+  pivot_longer(cols = contains("_avg"),
+               names_to = "Component",
+               values_to = "Percent") %>%
+  mutate(Component = case_when(
+    Component == "Percent_litter_derived_MOM_avg" ~ "MOM",
+    Component == "Percent_litter_derived_POM_avg" ~ "POM",
+    Component == "Percent_litter_derived_CO2_avg" ~ "CO₂",
+  ))  %>%
+   select(`Plot ID`, Component, Percent, `Distance from top (m)`)
+
+# Pivot the standard deviations
+litter_sd <- Litter_derived_average %>%
+  pivot_longer(cols = contains("_sd"),
+               names_to = "Component",
+               values_to = "SD") %>%
+  mutate(Component = case_when(
+    Component == "Percent_litter_derived_MOM_sd" ~ "MOM",
+    Component == "Percent_litter_derived_POM_sd" ~ "POM",
+    Component == "Percent_litter_derived_CO2_sd" ~ "CO₂"
+  ))
+
+# Join average and SD together
+litter_long <- left_join(litter_avg, litter_sd, by = c("Plot ID", "Component"))
+
+# Optional: order the components
+litter_long$Component <- factor(litter_long$Component, levels = c("POM", "MOM", "CO₂"))
+
+# Step 3: Compute bar base and top manually per Plot_ID
+litter_long <- litter_long %>%
+  arrange(`Plot ID`, Component) %>%
+  group_by(`Plot ID`) %>%
+  mutate(
+    cum_sum = if_else(Component == "POM",Percent_litter_derived_MOM_avg+Percent_litter_derived_POM_avg, Percent),  # cumulative sum for stacking
+    ypos =  cum_sum  # center of each segment
+  ) %>%
+  ungroup()
+
+
+# Prepare raw data for plotting points
+litter_raw <- Litter_derived %>%
+  mutate(
+    POM_combined = Percent_litter_derived_POM + Percent_litter_derived_MOM
+  ) %>%
+  select(`Plot ID`, `Distance from top (m)`, Bulk_C_mg_g_dw_start, `Clay<0,002`,MOM_C_mg_g_soil_end, 
+         Percent_litter_derived_MOM, 
+         POM_combined,
+         Percent_litter_derived_CO2) %>%
+  pivot_longer(
+    cols = c(Percent_litter_derived_MOM, POM_combined, Percent_litter_derived_CO2),
+    names_to = "Component",
+    values_to = "Percent"
+  ) %>%
+  mutate(Component = case_when(
+    Component == "Percent_litter_derived_MOM" ~ "MOM",
+    Component == "POM_combined" ~ "POM",
+    Component == "Percent_litter_derived_CO2" ~ "CO₂"
+  ))
+
+
+
+litter_long_linear <- Litter_derived %>%
+  pivot_longer(
+    cols = matches("^Percent_litter_derived_(?!bulk)", perl = TRUE),
+    names_to = "Component",
+    values_to = "Percent"
+  ) %>%
+  mutate(
+    Component = case_when(
+      Component == "Percent_litter_derived_CO2" ~ "CO₂",
+      Component == "Percent_litter_derived_MOM" ~ "MAOM",
+      Component == "Percent_litter_derived_POM" ~ "POM",
+      TRUE ~ Component
+    ),
+    Percent = if_else(Component == "CO₂", abs(Percent), Percent)
+  )
+
+
+
+litter_long_linear_new <- Litter_derived %>%
+  pivot_longer(
+    cols = c(`Litter derived MOM mg C g dw-1`, `Litter derived POM mg C g dw-1`, `Litter derived CO2 mg C g dw-1`),
+    names_to = "Component",
+    values_to = "C_mg_g"
+  ) %>%
+  mutate(
+    Component = case_when(
+      Component == "Litter derived CO2 mg C g dw-1" ~ "CO₂",
+      Component == "Litter derived MOM mg C g dw-1" ~ "MAOC",
+      Component == "Litter derived POM mg C g dw-1" ~ "POC",
+      TRUE ~ Component
+    ),
+    C_mg_g = if_else(Component == "CO₂", abs(C_mg_g), C_mg_g)
+  )
+
+```
+
+
+#CO2 graphs - figure 2#
+```{r}
+###CO2 plots over carbon content 
+#first merge the datasets 
+#Merge with the averages in litterderived:
+CO2_13C_average <- CO2_13C_average %>%
+  rename(`Plot ID` = ID)
+
+Litter_derived_CO2 <- Litter_derived %>%
+  group_by(`Plot ID`) %>%
+  summarise(across(where(is.numeric), ~mean(.x, na.rm = TRUE)))
+ 
+CO2_13C_average <- CO2_13C_average %>%
+  left_join(Litter_derived_CO2, by = "Plot ID")
+
+
+CO2_13C_average <- CO2_13C_average %>%
+  mutate(Treatment = case_when(
+    str_ends(`Plot ID`, "K") ~ "K",
+    str_ends(`Plot ID`, "R") ~ "R"
+  )) %>%
+  mutate(Treatment = factor(Treatment))
+
+
+CO2_13C_average <- CO2_13C_average %>%
+  mutate(
+    avg_CO2_from_litter = avg_CO2_from_litter *12.01/1000,
+    avg_CO2_from_soil = avg_CO2_from_soil *12.01/1000,
+    avg_CO2_from_total = avg_CO2_from_total *12.01/1000,
+    sd_CO2_from_litter= sd_CO2_from_litter *12.01/1000,
+    sd_CO2_from_soil = sd_CO2_from_soil *12.01/1000,
+    sd_CO2_from_total = sd_CO2_from_total *12.01/1000
+  )
+
+
+
+
+ggplot(CO2_13C_average, aes(x = days, group = Bulk_C_mg_g_dw_start)) +
+  # Plot CO2 from Litter with ribbons for error bars
+  geom_line(aes(y = avg_CO2_from_total, color = Bulk_C_mg_g_dw_start), linewidth = 0.5) +  # Thinner lines
+  geom_ribbon(aes(ymin = avg_CO2_from_total - sd_CO2_from_total, 
+                  ymax = avg_CO2_from_total + sd_CO2_from_total, 
+                  fill = Bulk_C_mg_g_dw_start), 
+              alpha = 0.2) +  # Set transparency for the ribbons
+  # Add points at measurement locations
+  geom_point(aes(
+    y = avg_CO2_from_total,
+    color = Bulk_C_mg_g_dw_start,
+    shape = Treatment
+    ), size = 2) +
+    scale_shape_manual(values = c("K" = 16, "R" = 15)) +
+  # Add titles and labels
+  labs(
+    title = "Average Cumulative CO2 from total Divided by ID",
+    x = "Days",
+    y = expression("Cumulative CO "[2]~" (mg CO"[2]~"-C g dw "^{-1}*")"),  # Using LaTeX to format the y-axis label
+    color = "",
+    fill = ""
+  ) +
+  scale_color_viridis_c() +  # Use Viridis color palette for lines
+  scale_fill_viridis_c() +   # Use Viridis color palette for ribbons
+  theme_minimal(base_size = 14) +
+  theme(
+    # Set axis lines
+    axis.line = element_line(color = "black"),
+    # Inside tick marks
+    axis.ticks = element_line(color = "black"),
+    axis.ticks.length = unit(-0.25, "cm"),
+    # Remove grid lines
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    # Black text
+    text = element_text(color = "black", family = "roboto"),
+    axis.text = element_text(color = "black", size = 12),
+    axis.title = element_text(color = "black"),
+    legend.text = element_text(color = "black"),
+    legend.title = element_text(color = "black"),
+    # Position the legend at the bottom
+    legend.position = "bottom",
+    # Rotate x-axis labels for better readability
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  ) +
+  guides(
+    color = guide_legend(nrow = 2),  # Adjust legend to be wider
+    fill = guide_legend(nrow = 2)    # Adjust legend to be wider
+  ) +
+  scale_x_continuous(limits = c(0, NA), breaks = seq(0, max(CO2_13C_average$days), by = 25)) +
+  scale_y_continuous(limits = c(0, NA), breaks = seq(0, 4, by = 2), labels = label_number(accuracy = 0.1))
+ggsave("CO2_over_carbon1.svg", width = 4, height = 4, dpi = 300)
+
+
+ggplot(CO2_13C_average, aes(x = days, group = Bulk_C_mg_g_dw_start)) +
+  # Plot CO2 from Litter with ribbons for error bars
+  geom_line(aes(y = avg_CO2_from_litter, color = Bulk_C_mg_g_dw_start), linewidth = 0.5) +  # Thinner lines
+  geom_ribbon(aes(ymin = avg_CO2_from_litter - sd_CO2_from_litter, 
+                  ymax = avg_CO2_from_litter + sd_CO2_from_litter, 
+                  fill = Bulk_C_mg_g_dw_start), 
+              alpha = 0.2) +  # Set transparency for the ribbons
+  
+  # Add points at measurement locations
+  geom_point(aes(
+  y = avg_CO2_from_litter,
+  color = Bulk_C_mg_g_dw_start,
+  shape = Treatment
+  ), size = 2) +
+  scale_shape_manual(values = c("K" = 16, "R" = 15)) +
+  # Add titles and labels
+  labs(
+    title = "Average Cumulative CO2 from Litter Divided by ID",
+    x = "Days",
+    y = expression("Cumulative CO "[2]~" (mg CO"[2]~"-C g dw "^{-1}*")"),  # Using LaTeX to format the y-axis label
+    color = "",
+    fill = ""
+  ) +
+  scale_color_viridis_c() +  # Use Viridis color palette for lines
+  scale_fill_viridis_c() +   # Use Viridis color palette for ribbons
+  theme_minimal(base_size = 14) +
+  theme(
+    # Set axis lines
+    axis.line = element_line(color = "black"),
+    # Inside tick marks
+    axis.ticks = element_line(color = "black"),
+    axis.ticks.length = unit(-0.25, "cm"),
+    # Remove grid lines
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    # Black text
+    text = element_text(color = "black", family = "roboto"),
+    axis.text = element_text(color = "black", size = 12),
+    axis.title = element_text(color = "black"),
+    legend.text = element_text(color = "black"),
+    legend.title = element_text(color = "black"),
+    # Position the legend at the bottom
+    legend.position = "bottom",
+    # Rotate x-axis labels for better readability
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  ) +
+  guides(
+    color = guide_legend(nrow = 2),  # Adjust legend to be wider
+    fill = guide_legend(nrow = 2)    # Adjust legend to be wider
+  ) +
+  scale_x_continuous(limits = c(0, NA), breaks = seq(0, max(CO2_13C_average$days), by = 25))+
+  scale_y_continuous(limits = c(0, NA), breaks = seq(0, 3, by = 1.5))
+
+ggsave("CO2_over_carbon2.svg", width = 4, height = 4, dpi = 300)
+
+
+
+ggplot(CO2_13C_average, aes(x = days, group = Bulk_C_mg_g_dw_start)) +
+  # Plot CO2 from Litter with ribbons for error bars
+  geom_line(aes(y = avg_CO2_from_soil, color = Bulk_C_mg_g_dw_start), linewidth = 0.5) +  # Thinner lines
+  geom_ribbon(aes(ymin = avg_CO2_from_soil - sd_CO2_from_soil, 
+                  ymax = avg_CO2_from_soil + sd_CO2_from_soil, 
+                  fill = Bulk_C_mg_g_dw_start), 
+              alpha = 0.2) +  # Set transparency for the ribbons
+  
+  # Add points at measurement locations
+  geom_point(aes(
+    y = avg_CO2_from_soil,
+    color = Bulk_C_mg_g_dw_start,
+    shape = Treatment
+    ), size = 2) +
+    scale_shape_manual(values = c("K" = 16, "R" = 15)) +
+
+  
+  # Add titles and labels
+  labs(
+    title = "Average Cumulative CO2 from soil Divided by ID",
+    x = "Days",
+    y = expression("Cumulative CO "[2]~" (mg CO"[2]~"-C g dw "^{-1}*")"),  # Using LaTeX to format the y-axis label
+    color = "",
+    fill = ""
+  ) +
+  scale_color_viridis_c() +  # Use Viridis color palette for lines
+  scale_fill_viridis_c() +   # Use Viridis color palette for ribbons
+  theme_minimal(base_size = 14) +
+  theme(
+    # Set axis lines
+    axis.line = element_line(color = "black"),
+    # Inside tick marks
+    axis.ticks = element_line(color = "black"),
+    axis.ticks.length = unit(-0.25, "cm"),
+    # Remove grid lines
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    # Black text
+    text = element_text(color = "black", family = "roboto"),
+    axis.text = element_text(color = "black", size = 12),
+    axis.title = element_text(color = "black"),
+    legend.text = element_text(color = "black"),
+    legend.title = element_text(color = "black"),
+    # Position the legend at the bottom
+    legend.position = "bottom",
+    # Rotate x-axis labels for better readability
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  ) +
+  guides(
+    color = guide_legend(nrow = 2),  # Adjust legend to be wider
+    fill = guide_legend(nrow = 2)    # Adjust legend to be wider
+  ) +
+  scale_x_continuous(limits = c(0, NA), breaks = seq(0, max(CO2_13C_average$days), by = 25)) +
+  scale_y_continuous(limits = c(0, NA), breaks = seq(0, 1, by = 0.5))
+ggsave("CO2_over_carbon3.svg", width = 4, height = 4, dpi = 300)
+
+
+
+
+
+
+Litter_derived_average <- Litter_derived_average %>%
+  mutate(Treatment = case_when(
+    str_ends(`Plot ID`, "K") ~ "K",
+    str_ends(`Plot ID`, "R") ~ "R"
+  )) %>%
+  mutate(Treatment = factor(Treatment))
+
+
+ggplot(Litter_derived_average, aes(x = Bulk_C_mg_g_dw_start)) +
+   geom_smooth(
+  aes(x = Bulk_C_mg_g_dw_start, y = CO2_total_avg),
+  method = "lm", color = "black", fill = "gray70", se = TRUE
+) +
+  geom_errorbar(aes(ymin = CO2_total_avg - CO2_total_sd, 
+                  ymax = CO2_total_avg + CO2_total_sd),
+                width = 0.3) +
+  geom_point(aes(
+  y = CO2_total_avg,
+  color = Bulk_C_mg_g_dw_start,
+  shape = Treatment), 
+  size = 3) +
+  scale_shape_manual(values = c("K" = 16, "R" = 15)) +
+  labs(
+    title = "Average Cumulative CO2 from total Divided by ID",
+    x = expression("Bulk C (mg g dw "^{-1}*")"),
+    y = expression("Cumulative CO "[2]~" (mg CO"[2]~"-C g dw "^{-1}*")"),  # Using LaTeX to format the y-axis label
+    color = ""
+  ) +
+  scale_color_viridis_c() + 
+  theme_minimal(base_size = 14) +
+  theme(
+    axis.line = element_line(color = "black"),
+    axis.ticks = element_line(color = "black"),
+    axis.ticks.length = unit(-0.25, "cm"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    text = element_text(color = "black", family = "roboto"),
+    axis.text = element_text(color = "black", size = 12),
+    axis.title = element_text(color = "black"),
+    legend.text = element_text(color = "black"),
+    legend.title = element_text(color = "black"),
+    legend.position = "bottom",
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  ) +
+  guides(
+    color = guide_legend(nrow = 2)  ) +
+  scale_x_continuous(limits = c(26, NA), breaks = seq(26, 40, by = 2)) +
+  scale_y_continuous(breaks = seq(3.6, 4.2, by = 0.2))
+ggsave("CO2_over_carbon4.svg", width = 4, height = 4, dpi = 300)
+
+
+
+
+
+
+ggplot(Litter_derived_average, aes(x = Bulk_C_mg_g_dw_start)) +
+  geom_smooth(
+  aes(x = Bulk_C_mg_g_dw_start, y = CO2_litter_derived_avg),
+  method = "lm", color = "black", fill = "gray70", se = TRUE
+) +
+  geom_errorbar(aes(ymin = CO2_litter_derived_avg - CO2_litter_derived_sd, 
+                  ymax = CO2_litter_derived_avg + CO2_litter_derived_sd),
+                width = 0.3) +
+  geom_point(aes(
+  y = CO2_litter_derived_avg,
+  color = Bulk_C_mg_g_dw_start,
+  shape = Treatment), 
+  size = 3) +
+  scale_shape_manual(values = c("K" = 16, "R" = 15)) +
+  labs(
+    title = "Average Cumulative CO2 from litter Divided by ID",
+    x = expression("Bulk C (mg g dw "^{-1}*")"),
+    y = expression("Cumulative CO "[2]~" (mg CO"[2]~"-C g dw "^{-1}*")"),  # Using LaTeX to format the y-axis label
+    color = ""
+  ) +
+  scale_color_viridis_c() + 
+  theme_minimal(base_size = 14) +
+  theme(
+    axis.line = element_line(color = "black"),
+    axis.ticks = element_line(color = "black"),
+    axis.ticks.length = unit(-0.25, "cm"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    text = element_text(color = "black", family = "roboto"),
+    axis.text = element_text(color = "black", size = 12),
+    axis.title = element_text(color = "black"),
+    legend.text = element_text(color = "black"),
+    legend.title = element_text(color = "black"),
+    legend.position = "bottom",
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  ) +
+  guides(
+    color = guide_legend(nrow = 2)  ) +
+  scale_x_continuous(limits = c(26, NA), breaks = seq(26, 40, by = 2)) +
+  scale_y_continuous(breaks = seq(2.8, 3.2, by = 0.2))
+ggsave("CO2_over_carbon5.svg", width = 4, height = 4, dpi = 300)
+
+
+
+
+
+ggplot(Litter_derived_average, aes(x = Bulk_C_mg_g_dw_start)) +
+  geom_smooth(
+  aes(x = Bulk_C_mg_g_dw_start, y = CO2_soil_derived_avg),
+  method = "lm", color = "black", fill = "gray70", se = TRUE
+) +
+  geom_errorbar(aes(ymin = CO2_soil_derived_avg - CO2_soil_derived_sd, 
+                  ymax = CO2_soil_derived_avg + CO2_soil_derived_sd),
+                width = 0.3) +
+  geom_point(aes(
+  y = CO2_soil_derived_avg,
+  color = Bulk_C_mg_g_dw_start,
+  shape = Treatment
+  ), size = 3) +
+  scale_shape_manual(values = c("K" = 16, "R" = 15)) +
+  labs(
+    title = "Average Cumulative CO2 from soil Divided by ID",
+    x = expression("Bulk C (mg g dw "^{-1}*")"),
+    y = expression("Cumulative CO "[2]~" (mg CO"[2]~"-C g dw "^{-1}*")"),  # Using LaTeX to format the y-axis label
+    color = ""
+  ) +
+  scale_color_viridis_c() + 
+  theme_minimal(base_size = 14) +
+  theme(
+    axis.line = element_line(color = "black"),
+    axis.ticks = element_line(color = "black"),
+    axis.ticks.length = unit(-0.25, "cm"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    text = element_text(color = "black", family = "roboto"),
+    axis.text = element_text(color = "black", size = 12),
+    axis.title = element_text(color = "black"),
+    legend.text = element_text(color = "black"),
+    legend.title = element_text(color = "black"),
+    legend.position = "bottom",
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  ) +
+  guides(
+    color = guide_legend(nrow = 2)  ) +
+  scale_x_continuous(limits = c(26, NA), breaks = seq(26, 40, by = 2)) +
+  scale_y_continuous(breaks = seq(0.9, 1.1, by = 0.1))
+ggsave("CO2_over_carbon6.svg", width = 4, height = 4, dpi = 300)
+
+
+
+
+#Averages
+model <- lm(CO2_total_avg ~ Bulk_C_mg_g_dw_start, data = Litter_derived_average)
+summary_model <- summary(model)
+intercept <- summary_model$coefficients[1, 1]
+slope <- summary_model$coefficients[2, 1]
+r_squared <- summary_model$r.squared
+p_value <- summary_model$coefficients[2, 4]
+cat("Equation total: y =", round(intercept, 3), "+", round(slope, 3), "* x\n")
+cat("R-squared total:", round(r_squared, 3), "\n")
+cat("P-value total:", signif(p_value, 3), "\n")
+
+model <- lm(CO2_litter_derived_avg ~ Bulk_C_mg_g_dw_start, data = Litter_derived_average)
+summary_model <- summary(model)
+intercept <- summary_model$coefficients[1, 1]
+slope <- summary_model$coefficients[2, 1]
+r_squared <- summary_model$r.squared
+p_value <- summary_model$coefficients[2, 4]
+cat("Equation litter derived: y =", round(intercept, 3), "+", round(slope, 3), "* x\n")
+cat("R-squared litter derived:", round(r_squared, 3), "\n")
+cat("P-value litter derived:", signif(p_value, 3), "\n")
+
+model <- lm(CO2_soil_derived_avg ~ Bulk_C_mg_g_dw_start, data = Litter_derived_average)
+summary_model <- summary(model)
+intercept <- summary_model$coefficients[1, 1]
+slope <- summary_model$coefficients[2, 1]
+r_squared <- summary_model$r.squared
+p_value <- summary_model$coefficients[2, 4]
+cat("Equation soil derived: y =", round(intercept, 3), "+", round(slope, 3), "* x\n")
+cat("R-squared soil derived:", round(r_squared, 3), "\n")
+cat("P-value soil derived:", signif(p_value, 3), "\n")
+
+```
+
+
+#Figure 3
+```{r}
+#litter-derived plot 
+
+
+litter_summary <- litter_long_linear_new %>% 
+  filter(Component %in% c("MAOC", "POC")) %>%
+  group_by(`Plot ID`, Component, Bulk_C_mg_g_dw_start) %>%
+  summarise(
+    mean_C = mean(C_mg_g, na.rm = TRUE),
+    sd_C = sd(C_mg_g, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+litter_long_linear_new <- litter_long_linear_new %>% 
+  filter(Component %in% c("MAOC", "POC"))
+
+litter_summary <- litter_summary %>%
+  mutate(Treatment = case_when(
+    str_ends(`Plot ID`, "K") ~ "K",
+    str_ends(`Plot ID`, "R") ~ "R"
+  )) %>%
+  mutate(Treatment = factor(Treatment))
+
+
+Litter_avg <- Litter_derived %>%
+  group_by(`Plot ID`) %>%
+  summarise(across(where(is.numeric), ~mean(.x, na.rm = TRUE)))
+
+
+Litter_avg <- Litter_avg %>%
+  mutate(Treatment = case_when(
+    str_ends(`Plot ID`, "K") ~ "K",
+    str_ends(`Plot ID`, "R") ~ "R"
+  )) %>%
+  mutate(Treatment = factor(Treatment))
+
+
+
+ggplot() +
+  # Error bars with caps (mean ± SD)
+  geom_errorbar(
+    data = litter_summary,aes(x = Bulk_C_mg_g_dw_start, ymin = mean_C - sd_C, ymax = mean_C + sd_C, color = Component), width = 0.2, size = 0.6) +
+  # Mean points
+  geom_point(
+    data = litter_summary, aes(x = Bulk_C_mg_g_dw_start,y = mean_C,color = Component, shape = Treatment),size = 3) +
+  scale_shape_manual(values = c("K" = 16, "R" = 15)) +
+  guides(shape = "none")+
+  # Regression lines from averages
+  geom_smooth(
+    data = litter_summary, aes(x = Bulk_C_mg_g_dw_start,y = mean_C ,color = Component,fill = Component), method = "lm", se = TRUE, size = 1.2) +
+  # Regression equations
+  stat_regline_equation(
+    data = litter_summary,
+    aes(
+      x = Bulk_C_mg_g_dw_start,
+      y = mean_C,
+      label = after_stat(paste(eq.label, rr.label, sep = "~~~")),
+      group = Component
+    ),
+    label.x.npc = c(0.35, 0.35),
+    label.y.npc = c(0.5, 0.14),
+    show.legend = FALSE
+  ) +
+  # Manual colors and labels
+  scale_color_manual(
+    values = c("MAOC" = "#453781ff", "POC" = "#287d8eff", "CO₂" = "#3cbb75ff"),
+    labels = list("MAOC" = "MAOC", "POC" = "POC", "CO₂" = expression(CO[2])),
+    name = NULL
+  ) +
+  scale_fill_manual(
+    values = c("MAOC" = "#453781ff", "POC" = "#287d8eff", "CO₂" = "#3cbb75ff"),
+    labels = list("MAOC" = "MAOC", "POC" = "POC", "CO₂" = expression(CO[2])),
+    name = NULL
+  ) +
+  labs(
+    x = expression("SOC (mg C g dw "^{-1}*")"),
+    y = expression("Litter-derived C (mg C g dw "^{-1}*")"),
+    title = ""
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    axis.line = element_line(color = "black"),
+    axis.ticks = element_line(color = "black"),
+    axis.ticks.length = unit(-0.25, "cm"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    text = element_text(color = "black", family = "roboto"),
+    axis.text.x = element_text(angle = 45, hjust = 1, color = "black"),
+    axis.text.y = element_text(color = "black"),
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    legend.position = "right"
+  ) +
+  scale_x_continuous(limits = c(27, NA), breaks = seq(26, 40, by = 2)) +
+  scale_y_continuous(breaks = seq(0, 3.5, by = 0.2))
+
+ggsave("Litter_derived_components1.png", width = 7, height = 5, dpi = 300)
+ggsave("Litter_derived_components1.svg", width = 7, height = 5, dpi = 300)
+
+#Determine p-value fro MAOC. POC is significant:
+# Fit the linear model
+lm_model <- lm(`Litter derived MOM mg C g dw-1` ~ Bulk_C_mg_g_dw_start, data = Litter_avg)
+# Get the summary
+lm_summary <- summary(lm_model)
+# Extract the p-value for the slope (Bulk_C_mg_g_dw_start)
+p_value <- lm_summary$coefficients["Bulk_C_mg_g_dw_start", "Pr(>|t|)"]
+# Print it in a sentence
+cat("The p-value for litter-derived MAOC over Bulk C (linear regression) is", signif(p_value, 3), "\n")
+
+lm_model <- lm(`Litter derived POM mg C g dw-1` ~ Bulk_C_mg_g_dw_start, data = Litter_avg)
+# Get the summary
+lm_summary <- summary(lm_model)
+# Extract the p-value for the slope (Bulk_C_mg_g_dw_start)
+p_value <- lm_summary$coefficients["Bulk_C_mg_g_dw_start", "Pr(>|t|)"]
+# Print it in a sentence
+cat("The p-value for litter-derived POC over Bulk C (linear regression) is", signif(p_value, 3), "\n")
+
+
+
+
+
+mean(-Litter_derived$Percent_litter_derived_CO2)
+sd(-Litter_derived$Percent_litter_derived_CO2)
+mean(Litter_derived$Percent_litter_derived_MOM)
+sd(Litter_derived$Percent_litter_derived_MOM)
+mean(Litter_derived$Percent_litter_derived_POM)
+sd(Litter_derived$Percent_litter_derived_POM)
+mean(Litter_derived$Percent_litter_derived_total)
+sd(Litter_derived$Percent_litter_derived_total)
+
+
+
+```
+
+
+
+
+#Correlations - Figure 4# 
+```{r}
+p1 <-  ggplot(Litter_avg, aes(x = Bulk_C_mg_g_dw_start, y = MOM_C_mg_g_soil_start)) +
+  geom_smooth(method = "lm", se = TRUE, color = "#453781ff") +
+    stat_regline_equation(
+    aes(label = after_stat(paste(eq.label, rr.label, sep = "~~~"))),
+    label.x.npc = "left", label.y.npc = 1
+  ) +
+  geom_point(aes(shape = Treatment, color = Bulk_C_mg_g_dw_start),size = 3) +
+  scale_color_viridis_c() + 
+  scale_shape_manual(values = c("K" = 16, "R" = 15)) +
+  labs(
+    x = expression("SOC (mg C g dw soil "^{-1}*")"),
+    y = expression("MAOC (mg C g dw soil "^{-1}*")"),
+    title = ""
+  ) +
+  theme_minimal()+
+  theme(
+    legend.position = "none",
+    text = element_text(color = "black", family = "roboto"),
+    panel.grid = element_blank(),
+    axis.line = element_line(color = "black"),
+    axis.ticks.length = unit(-0.2, "cm"),
+    axis.text = element_text(colour = "black", size = 11, margin = margin(t = 5, r = 5, b = 5, l = 5)),
+    axis.ticks = element_line(color = "black"),
+    legend.text = element_text(size = 11),
+    axis.title = element_text(size = 12)
+  ) +
+  scale_x_continuous(limits = c(27, NA), breaks = seq(26, 40, by = 2)) +
+  scale_y_continuous(limits = c(21, 36), breaks = seq(25, 36, by = 5)) 
+
+
+p2 <- ggplot(Litter_avg, aes(x = `Clay<0,002`, y = MOM_C_mg_g_soil_start)) +
+  geom_smooth(method = "lm", se = TRUE, color = "#453781ff") +
+    stat_regline_equation(
+    aes(label = after_stat(paste(eq.label, rr.label, sep = "~~~"))),
+    label.x.npc = "left", label.y.npc = 1
+  ) +
+  geom_point(aes(shape = Treatment, color = Bulk_C_mg_g_dw_start),size = 3) +
+  scale_color_viridis_c() + 
+  scale_shape_manual(values = c("K" = 16, "R" = 15)) +
+  labs(
+    x = "Clay (%)",
+    y = expression("MAOC (mg C g dw soil "^{-1}*")"),
+    title = ""
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "none",
+    text = element_text(color = "black", family = "roboto"),
+    panel.grid = element_blank(),
+    axis.line = element_line(color = "black"),
+    axis.ticks.length = unit(-0.2, "cm"),
+    axis.text = element_text(colour = "black", size = 11, margin = margin(t = 5, r = 5, b = 5, l = 5)),
+    axis.ticks = element_line(color = "black"),
+    legend.text = element_text(size = 11),
+    axis.title = element_text(size = 12)
+  ) +
+  scale_y_continuous(limits = c(21, 36), breaks = seq(25, 36, by = 5))  
+
+
+p3 <- ggplot(Litter_avg, aes(x = Bulk_C_mg_g_dw_start, y = POM_C_mg_g_soil_start)) +
+   geom_smooth(method = "lm", se = TRUE, color = "#453781ff") +
+    stat_regline_equation(
+    aes(label = after_stat(paste(eq.label, rr.label, sep = "~~~"))),
+    label.x.npc = "left", label.y.npc = 1
+  ) +
+  geom_point(aes(shape = Treatment, color = Bulk_C_mg_g_dw_start),size = 3) +
+  scale_color_viridis_c() + 
+  scale_shape_manual(values = c("K" = 16, "R" = 15)) +
+  labs(
+    y = expression("POC (mg C g dw soil "^{-1}*")"),
+    x = expression("SOC (mg C g dw soil "^{-1}*")"),
+    title = ""
+  ) +
+  theme_minimal()+
+  theme(
+    legend.position = "none",
+    text = element_text(color = "black", family = "roboto"),
+    panel.grid = element_blank(),
+    axis.line = element_line(color = "black"),
+    axis.ticks.length = unit(-0.2, "cm"),
+    axis.text = element_text(colour = "black", size = 11, margin = margin(t = 5, r = 5, b = 5, l = 5)),
+    axis.ticks = element_line(color = "black"),
+    legend.text = element_text(size = 11),
+    axis.title = element_text(size = 12)
+  ) +
+  scale_x_continuous(limits = c(27, NA), breaks = seq(26, 40, by = 2)) +
+  scale_y_continuous(limits = c(1.75, 3), breaks = seq(2, 3, by = 0.5)) 
+
+p4 <- ggplot(Litter_avg, aes(x = Clay_and_silt, y = MOM_C_mg_g_soil_start)) +
+  geom_smooth(method = "lm", se = TRUE, color = "#453781ff") +
+    stat_regline_equation(
+    aes(label = after_stat(paste(eq.label, rr.label, sep = "~~~"))),
+    label.x.npc = "left", label.y.npc = 1
+  ) +
+  geom_point(aes(shape = Treatment, color = Bulk_C_mg_g_dw_start),size = 3) +
+  scale_color_viridis_c() + 
+  scale_shape_manual(values = c("K" = 16, "R" = 15)) +
+  labs(
+    x = "Clay + silt (%)",
+    y = expression("MAOC (mg C g dw soil "^{-1}*")"),
+    title = ""
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "none",
+    text = element_text(color = "black", family = "roboto"),
+    panel.grid = element_blank(),
+    axis.line = element_line(color = "black"),
+    axis.ticks.length = unit(-0.2, "cm"),
+    axis.text = element_text(colour = "black", size = 11, margin = margin(t = 5, r = 5, b = 5, l = 5)),
+    axis.ticks = element_line(color = "black"),
+    legend.text = element_text(size = 11),
+    axis.title = element_text(size = 12)
+  ) +
+  scale_y_continuous(limits = c(21, 36), breaks = seq(25, 36, by = 5)) 
+
+
+
+p5 <- ggplot(Litter_avg, aes(x = Bulk_C_mg_g_dw_start, y = pH_20231220)) +
+  geom_smooth(method = "lm", se = TRUE, color = "#453781ff") +
+    stat_regline_equation(
+    aes(label = after_stat(paste(eq.label, rr.label, sep = "~~~"))),
+    label.x.npc = "left", label.y.npc = 0.2) +
+  geom_point(aes(shape = Treatment, color = Bulk_C_mg_g_dw_start),size = 3) +
+  scale_color_viridis_c() + 
+  scale_shape_manual(values = c("K" = 16, "R" = 15)) +
+    labs(
+    y = "pH",
+    x = expression("SOC (mg C g dw soil "^{-1}*")"),
+    title = ""
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "none",
+    text = element_text(color = "black", family = "roboto"),
+    panel.grid = element_blank(),
+    axis.line = element_line(color = "black"),
+    axis.ticks.length = unit(-0.2, "cm"),
+    axis.text = element_text(colour = "black", size = 11, margin = margin(t = 5, r = 5, b = 5, l = 5)),
+    axis.ticks = element_line(color = "black"),
+    legend.text = element_text(size = 11),
+    axis.title = element_text(size = 12)
+  ) +
+  scale_y_continuous(limits = c(5.3, 6.12), breaks = seq(5.4, 7, by = 0.3)) + 
+  scale_x_continuous(limits = c(27, NA), breaks = seq(26, 40, by = 2))
+
+
+
+p6 <- ggplot(Litter_avg, aes(x = Bulk_C_mg_g_dw_start, y = `Bulk_C/N_start`)) +
+  geom_smooth(method = "lm", se = TRUE, color = "#453781ff") +
+    stat_regline_equation(
+    aes(label = after_stat(paste(eq.label, rr.label, sep = "~~~"))),
+    label.x.npc = "left", label.y = 11.5) +
+  geom_point(aes(shape = Treatment, color = Bulk_C_mg_g_dw_start),size = 3) +
+  scale_color_viridis_c() + 
+  scale_shape_manual(values = c("K" = 16, "R" = 15)) +
+    labs(
+    y = "C:N ratio",
+    x = expression("SOC (mg C g dw soil "^{-1}*")"),
+    title = ""
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "none",
+    text = element_text(color = "black", family = "roboto"),
+    panel.grid = element_blank(),
+    axis.line = element_line(color = "black"),
+    axis.ticks.length = unit(-0.2, "cm"),
+    axis.text = element_text(colour = "black", size = 11, margin = margin(t = 5, r = 5, b = 5, l = 5)),
+    axis.ticks = element_line(color = "black"),
+    legend.text = element_text(size = 11),
+    axis.title = element_text(size = 12)
+  ) +
+  scale_y_continuous(limits = c(10.3, NA), breaks = seq(10.5, 13, by = 0.5)) + 
+  scale_x_continuous(limits = c(27, NA), breaks = seq(26, 40, by = 2))
+
+
+#All are significant except POC over SOC:
+# Fit the linear model
+lm_model <- lm(POM_C_mg_g_soil_start ~ Bulk_C_mg_g_dw_start, data = Litter_avg)
+# Get the summary
+lm_summary <- summary(lm_model)
+# Extract the p-value for the slope (Bulk_C_mg_g_dw_start)
+p_value <- lm_summary$coefficients["Bulk_C_mg_g_dw_start", "Pr(>|t|)"]
+# Print it in a sentence
+cat("The p-value for Bulk C/N over Bulk C (linear regression) is", signif(p_value, 3), "\n")
+
+# Fit the linear model
+lm_model <- lm(`Bulk_C/N_start` ~ Bulk_C_mg_g_dw_start, data = Litter_avg)
+# Get the summary
+lm_summary <- summary(lm_model)
+# Extract the p-value for the slope (Bulk_C_mg_g_dw_start)
+p_value <- lm_summary$coefficients["Bulk_C_mg_g_dw_start", "Pr(>|t|)"]
+# Print it in a sentence
+cat("The p-value for MAOC formation efficiency over Bulk C (linear regression) is", signif(p_value, 3), "\n")
+
+
+# (p1+ p2) / (p3 + p4) / (p5 + p6)
+# ggsave("Correlation_plots.png", width = 7, height = 9, dpi = 300)
+# ggsave("Correlation_plots.svg", width = 7, height = 9, dpi = 300)
+
+
+
+```
+
+#MAOM formation efficiency - Figure 5 #
+```{r}
+#%>% filter(Bulk_C_mg_g_dw_start < 33
+
+Litter_derived_average <- Litter_derived_average %>%
+  mutate(Treatment = case_when(
+    str_ends(`Plot ID`, "K") ~ "K",
+    str_ends(`Plot ID`, "R") ~ "R"
+  )) %>%
+  mutate(Treatment = factor(Treatment))
+
+
+
+ggplot(Litter_derived_average , aes(x = Bulk_C_mg_g_dw_start, y = MAOM_formation_efficiency_avg)) +
+  scale_shape_manual(values = c("K" = 16, "R" = 15)) +
+  geom_errorbar(aes(x = Bulk_C_mg_g_dw_start, ymin = MAOM_formation_efficiency_avg - MAOM_formation_efficiency_sd, ymax = MAOM_formation_efficiency_avg + MAOM_formation_efficiency_sd
+    ), width = 0.2, size = 0.4) +
+  geom_smooth(aes(x = Bulk_C_mg_g_dw_start, y = MAOM_formation_efficiency_avg), method = "lm", se = TRUE, color = "#453781ff") +
+  geom_point(aes(shape = Treatment, color = Bulk_C_mg_g_dw_start),size = 3) +
+  scale_color_viridis_c() + 
+    stat_regline_equation(
+    aes(label = after_stat(paste(eq.label, rr.label, sep = "~~~"))),
+    label.x.npc = 0.25, label.y.npc = 1
+  ) +
+  labs(
+    y = expression("MAOC formation efficiency"),
+    x = expression("SOC (mg C g dw "^{-1}*")"),
+    title = ""
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "none",
+    text = element_text(color = "black", family = "roboto"),
+    panel.grid = element_blank(),
+    axis.line = element_line(color = "black"),
+    axis.ticks.length = unit(-0.2, "cm"),
+    axis.text = element_text(colour = "black", size = 11, margin = margin(t = 5, r = 5, b = 5, l = 5)),
+    axis.ticks = element_line(color = "black"),
+    legend.text = element_text(size = 11),
+    axis.title = element_text(size = 12)
+  ) +
+  scale_x_continuous(limits = c(27, NA), breaks = seq(26, 40, by = 2))#+
+  scale_y_continuous(limits = c(21, 36), breaks = seq(25, 35, by = 5))  
+
+ggsave("MAOM_formation_efficiency.png", width = 5, height = 3.5, dpi = 300)
+ggsave("MAOM_formation_efficiency.svg", width = 5, height = 3.5, dpi = 300)
+
+#Determine p-value:
+# Fit the linear model
+lm_model <- lm(MAOM_formation_efficiency_avg ~ Bulk_C_mg_g_dw_start, data = Litter_derived_average)
+# Get the summary
+lm_summary <- summary(lm_model)
+# Extract the p-value for the slope (Bulk_C_mg_g_dw_start)
+p_value <- lm_summary$coefficients["Bulk_C_mg_g_dw_start", "Pr(>|t|)"]
+# Print it in a sentence
+cat("The p-value for MAOC formation efficiency over Bulk C (linear regression) is", signif(p_value, 3), "\n")
+
+```
+
+
+#WFPS and precipitation - fig. S1
+```{r}
+#Define the time period for when rain exclusion shelters were in the plots
+start_date1_rain_exclusion <- as.POSIXct("2023-06-26")
+end_date1_rain_exclusion <- as.POSIXct("2023-10-26")
+
+
+plot_precipitation <- 
+  ggplot(data = Precipitation %>% filter(date > start_date1_rain_exclusion & date < end_date1_rain_exclusion)) +
+  geom_col(aes(x = date, y = precipitation), color = "black") +
+  labs(y = "Precipitation (mm)") + 
+  theme_minimal() +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        legend.position = "none",
+        plot.title = element_text(hjust = 0.5, color = "black"),
+        axis.text.x = element_text(color = "black", angle = 45, vjust = 1, hjust = 1), 
+        axis.text.y = element_text(color = "black"),
+        axis.title.y = element_text(color = "black", size = 11),
+        axis.title.x = element_blank(),  # Remove x-axis title
+        #axis.title.y = element_text(vjust = 0.5, size = 12),
+        #axis.title.y = element_markdown(margin = margin(r=2)),
+        axis.line = element_line(color = "black"),
+        axis.ticks.length = unit(-0.2, "cm"),
+        axis.ticks = element_line(color = "black"),
+        axis.ticks.y = element_line(color = "black"),
+        axis.ticks.x = element_line(color = "black")) +
+  scale_x_datetime(date_breaks = "1 month", labels = scales::date_format("%d %B %Y", locale = "en"), expand = c(0.01, 0.01),limits = c(start_date1_rain_exclusion, end_date1_rain_exclusion))
+  
+
+
+plot_WFPS <- 
+  ggplot(moisture_wfps %>% filter(Date > start_date1_rain_exclusion & 
+           Date < end_date1_rain_exclusion)) +
+  geom_line(aes(y = WFPS, x = Date, color = Treatment)) +  
+  labs(y = "WFPS (%)") + 
+  theme_minimal() +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        legend.position = "top",
+        legend.title = element_blank(),
+        plot.title = element_text(hjust = 0.5, color = "black"),
+        axis.text.x = element_blank(), #remove x-axis text 
+        axis.text.y = element_text(color = "black"),
+        axis.title.y = element_text(color = "black", size = 11),
+        axis.title.x = element_blank(),  # Remove x-axis title
+        #axis.title.y = element_text(vjust = 0.5, size = 12),
+        #axis.title.y = element_markdown(),
+        axis.line = element_line(color = "black"),
+        axis.ticks.length = unit(-0.2, "cm"),
+        axis.ticks = element_line(color = "black"),
+        axis.ticks.y = element_line(color = "black"),
+        axis.ticks.x = element_line(color = "black")) +
+  scale_x_datetime(date_breaks = "1 month", labels = scales::date_format("%d %B %Y", locale = "en"), expand = c(0.01, 0.01),limits = c(start_date1_rain_exclusion, end_date1_rain_exclusion)) +
+  #scale_alpha_manual(values = c("K" = 1, "R" = 0.5)) +
+  scale_color_manual(
+    values = c("K" = "#440154", "R" = "#21918c"),
+    labels = c("K" = "Control", "R" = "Rainout shelter")
+  )
+
+
+plot_WFPS / plot_precipitation
+
+
+#ggsave("Yearly_variations_for_13C.png", width = 6, height = 4, dpi = 1000)
+
+
+```
+
+
+
+
+#Correlation plot - fig. S2
+```{r}
+#Merge with microbial data 
+Litter_avg <- Litter_avg %>%
+  left_join(
+    microbial_data %>%
+      select(PlotID,
+             `Observed (ITS)`,
+             `Observed (16S)`,
+             `Shannon (ITS)`,
+             `Shannon (16S)`),
+    by = c("Plot ID" = "PlotID")
+  )
+
+# Select and rename only the variables you want
+data_for_correlation <- Litter_avg %>%
+  select(
+    pH_20231220,
+    `Bulk_C/N_start`,
+    Bulk_C_mg_g_dw_start,
+    Bulk_N_mg_g_dw_start,
+    `Litter derived MOM mg C g dw-1`,
+    `Litter derived POM mg C g dw-1`,
+    `Litter derived CO2 mg C g dw-1`,
+    MOM_C_mg_g_soil_end,
+    POM_C_mg_g_soil_end,
+    `Clay<0,002`,
+    `Silt(0,002-0,06)`,
+    `Sand(0,06-2)`, 
+    `Distance from top (m)`,
+    MAOM_formation_efficiency, 
+    `Soil derived CO2 mg C g dw-1`,
+    MOM_C_mg_g_soil_start,
+    POM_C_mg_g_soil_start, 
+    Clay_and_silt,
+    `Total CO2 mg C g dw-1`,
+    `Observed (ITS)`,
+    `Observed (16S)`,
+    `Shannon (ITS)`,
+    `Shannon (16S)`
+  ) %>%
+  rename(
+    pH = pH_20231220,
+    `C:N ratio (start)` = `Bulk_C/N_start`,
+    `SOC (start)` = Bulk_C_mg_g_dw_start,
+    `Bulk N (start)` = Bulk_N_mg_g_dw_start,
+    `Litter-derived MAOC` = `Litter derived MOM mg C g dw-1`,
+    `Litter-derived POC` = `Litter derived POM mg C g dw-1`,
+    `Litter-derived CO2` = `Litter derived CO2 mg C g dw-1`,
+    `MAOC (end)` = MOM_C_mg_g_soil_end,
+    `POC (end)` = POM_C_mg_g_soil_end,
+    `Clay (%)` = `Clay<0,002`,
+    `Silt (%)` = `Silt(0,002-0,06)`,
+    `Sand (%)` = `Sand(0,06-2)`,
+    `Distance from top (m)` = `Distance from top (m)`,
+    `MAOC FE` = MAOM_formation_efficiency,
+    `Soil-derived CO2` = `Soil derived CO2 mg C g dw-1`,
+    `MAOC (start)` = MOM_C_mg_g_soil_start, 
+    `POC (start)` = POM_C_mg_g_soil_start,
+    `Clay + silt` = Clay_and_silt,
+    `Total CO2` = `Total CO2 mg C g dw-1`,
+    `Observed (ITS)` = `Observed (ITS)`,
+    `Observed (16S)` = `Observed (16S)`,
+    `Shannon (ITS)` = `Shannon (ITS)`,
+    `Shannon (16S)` = `Shannon (16S)`
+  )
+
+
+#Compute correlation matrix
+cor_matrix <- cor(data_for_correlation, use = "pairwise.complete.obs", method = "pearson")
+
+#Compute p-values with safe handling
+cor_test <- function(mat) {
+  n <- ncol(mat)
+  p_mat <- matrix(NA, n, n)
+  colnames(p_mat) <- colnames(mat)
+  rownames(p_mat) <- colnames(mat)
+  
+  for (i in 1:n) {
+    for (j in 1:n) {
+      x <- mat[[i]]
+      y <- mat[[j]]
+      if (length(na.omit(x)) > 2 && length(unique(na.omit(x))) > 1 &&
+          length(na.omit(y)) > 2 && length(unique(na.omit(y))) > 1) {
+        test <- cor.test(x, y, method = "pearson")
+        p_mat[i, j] <- test$p.value
+      }
+    }
+  }
+  return(p_mat)
+}
+
+p_matrix <- cor_test(data_for_correlation)
+
+#Reorder and subset matrix
+desired_order <- c(
+  "MAOC FE",
+  "Litter-derived MAOC", 
+  "Litter-derived POC", 
+  "Litter-derived CO2", 
+  "Soil-derived CO2",
+  "Total CO2",
+  "MAOC (start)",
+  "POC (start)",
+  "MAOC (end)", 
+  "POC (end)", 
+  "pH", 
+  "Sand (%)",
+  "Silt (%)", 
+  "Clay (%)",
+  "Clay + silt",
+  "C:N ratio (start)",
+  "Bulk N (start)",
+  "SOC (start)", 
+  "Distance from top (m)",
+  "Shannon (ITS)",
+  "Observed (ITS)",
+  "Shannon (16S)", 
+  "Observed (16S)")
+
+
+# Check for missing variables
+missing_vars <- setdiff(desired_order, colnames(cor_matrix))
+if (length(missing_vars) > 0) {
+  warning("These variables are missing from the correlation matrix: ", paste(missing_vars, collapse = ", "))
+}
+
+# Keep only existing variables in desired order
+existing_vars <- intersect(desired_order, colnames(cor_matrix))
+cor_matrix <- cor_matrix[existing_vars, existing_vars]
+p_matrix <- p_matrix[existing_vars, existing_vars]
+
+# Step 7: Plot correlation matrix
+ggcorrplot(
+  cor_matrix,
+  method = "circle",
+  type = "lower",
+  lab = TRUE,
+  lab_size = 3,
+  p.mat = p_matrix,
+  sig.level = 0.05,
+  insig = "blank",
+  colors = c("red", "white", "blue"),
+  title = "",
+  ggtheme = theme_minimal() +
+    theme(
+      text = element_text(color = "black", family = "roboto"),
+      axis.text.x = element_text(color = "black", size = 10),
+      axis.text.y = element_text(color = "black", size = 10),
+      legend.text = element_text(size = 10),
+      axis.title = element_text(color = "black"),
+      plot.title = element_text(hjust = 0.5, size = 14, face = "bold", color = "black"),
+      panel.grid.minor = element_blank(),
+      axis.line = element_line(color = "black")
+    )
+)
+
+ggsave("Correlation_matrix.png", width = 9.5, height = 9.5, dpi = 1000)
+#`Litter derived POM mg C g dw-1`
+
+#Extra:
+model <- lm(`Litter derived CO2 mg C g dw-1` ~ `Litter derived MOM mg C g dw-1`, data = Litter_avg)
+summary_model <- summary(model)
+intercept <- summary_model$coefficients[1, 1]
+slope <- summary_model$coefficients[2, 1]
+r_squared <- summary_model$r.squared
+p_value <- summary_model$coefficients[2, 4]
+cat("Equation litter derived: y =", round(intercept, 3), "+", round(slope, 3), "* x\n")
+cat("R-squared litter derived:", round(r_squared, 3), "\n")
+cat("P-value litter derived:", signif(p_value, 3), "\n")
+
+
+```
+
+
+
+#Correlations - Figure S3 in SI#
+```{r}
+p1 <-
+  ggplot(Litter_avg, aes(x = LoI, y = Bulk_C_mg_g_dw_start/10)) +
+  geom_smooth(method = "lm", se = TRUE, color = "#453781ff") +
+    stat_regline_equation(
+    aes(label = after_stat(paste(eq.label, rr.label, sep = "~~~"))),
+    label.x.npc = "left", label.y.npc = 0.9
+  ) +
+  geom_point(aes(shape = Treatment, color = Bulk_C_mg_g_dw_start),size = 3) +
+  scale_color_viridis_c() + 
+  scale_shape_manual(values = c("K" = 16, "R" = 15)) +
+  labs(
+    x = expression("SOM (%)"),
+    y = expression("SOC (%)"),
+    title = ""
+  ) +
+  theme_minimal()+
+  theme(
+    legend.position = "none",
+    text = element_text(color = "black", family = "roboto"),
+    panel.grid = element_blank(),
+    axis.line = element_line(color = "black"),
+    axis.ticks.length = unit(-0.2, "cm"),
+    axis.text = element_text(colour = "black", size = 11, margin = margin(t = 5, r = 5, b = 5, l = 5)),
+    axis.ticks = element_line(color = "black"),
+    legend.text = element_text(size = 11),
+    axis.title = element_text(size = 12)
+  ) +
+  scale_y_continuous(limits = c(2.5, 4.1), breaks = seq(2.5, 4.0, by = 0.5)) +
+  scale_x_continuous(limits = c(6.5, NA), breaks = seq(6.5, 9, by = 0.5)) 
+
+
+
+p2 <-  
+  ggplot(Litter_avg, aes(x = Bulk_C_mg_g_dw_start, y = `MOM_C/N_start`)) +
+  geom_smooth(method = "lm", se = TRUE, color = "#453781ff") +
+    stat_regline_equation(
+    aes(label = after_stat(paste(eq.label, rr.label, sep = "~~~"))),
+    label.x.npc = "left", label.y.npc = 1
+  ) +
+  geom_point(aes(shape = Treatment, color = Bulk_C_mg_g_dw_start),size = 3) +
+  scale_color_viridis_c() + 
+  scale_shape_manual(values = c("K" = 16, "R" = 15)) +
+  labs(
+    x = expression("SOC (mg C g dw soil "^{-1}*")"),
+    y = expression("MAOC C:N ratio"),
+    title = ""
+  ) +
+  theme_minimal()+
+  theme(
+    legend.position = "none",
+    text = element_text(color = "black", family = "roboto"),
+    panel.grid = element_blank(),
+    axis.line = element_line(color = "black"),
+    axis.ticks.length = unit(-0.2, "cm"),
+    axis.text = element_text(colour = "black", size = 11, margin = margin(t = 5, r = 5, b = 5, l = 5)),
+    axis.ticks = element_line(color = "black"),
+    legend.text = element_text(size = 11),
+    axis.title = element_text(size = 12)
+  ) +
+  scale_x_continuous(limits = c(27, NA), breaks = seq(26, 40, by = 2)) +
+  scale_y_continuous(limits = c(9.8, NA), breaks = seq(10, 36, by = 0.5)) 
+
+
+p3 <-  
+  ggplot(Litter_avg, aes(x = Bulk_C_mg_g_dw_start, y = `POM_C/N_start`)) +
+  geom_smooth(method = "lm", se = TRUE, color = "#453781ff") +
+    stat_regline_equation(
+    aes(label = after_stat(paste(eq.label, rr.label, sep = "~~~"))),
+    label.x.npc = "left", label.y.npc = 0.85
+  ) +
+  geom_point(aes(shape = Treatment, color = Bulk_C_mg_g_dw_start),size = 3) +
+  scale_color_viridis_c() + 
+  scale_shape_manual(values = c("K" = 16, "R" = 15)) +
+  labs(
+    x = expression("SOC (mg C g dw soil "^{-1}*")"),
+    y = expression("POC C:N ratio"),
+    title = ""
+  ) +
+  theme_minimal()+
+  theme(
+    legend.position = "none",
+    text = element_text(color = "black", family = "roboto"),
+    panel.grid = element_blank(),
+    axis.line = element_line(color = "black"),
+    axis.ticks.length = unit(-0.2, "cm"),
+    axis.text = element_text(colour = "black", size = 11, margin = margin(t = 5, r = 5, b = 5, l = 5)),
+    axis.ticks = element_line(color = "black"),
+    legend.text = element_text(size = 11),
+    axis.title = element_text(size = 12)
+  ) +
+  scale_x_continuous(limits = c(27, NA), breaks = seq(26, 40, by = 2)) +
+  scale_y_continuous(limits = c(9, NA), breaks = seq(8, 11, by = 0.5))   
+  
+
+    
+p4 <-  
+  ggplot(Litter_avg, aes(x = Bulk_C_mg_g_dw_start, y = bulk_delta_13C)) +
+  geom_smooth(method = "lm", se = TRUE, color = "#453781ff") +
+    stat_regline_equation(
+    aes(label = after_stat(paste(eq.label, rr.label, sep = "~~~"))),
+    label.x.npc = "left", label.y.npc = 0.9
+  ) +
+  geom_point(aes(shape = Treatment, color = Bulk_C_mg_g_dw_start),size = 3) +
+  scale_color_viridis_c() + 
+  scale_shape_manual(values = c("K" = 16, "R" = 15)) +
+  labs(
+    x = expression("SOC (mg C g dw soil "^{-1}*")"),
+    y = expression("δ"^{13}*"C  SOC"),
+    title = ""
+  ) +
+  theme_minimal()+
+  theme(
+    legend.position = "none",
+    text = element_text(color = "black", family = "roboto"),
+    panel.grid = element_blank(),
+    axis.line = element_line(color = "black"),
+    axis.ticks.length = unit(-0.2, "cm"),
+    axis.text = element_text(colour = "black", size = 11, margin = margin(t = 5, r = 5, b = 5, l = 5)),
+    axis.ticks = element_line(color = "black"),
+    legend.text = element_text(size = 11),
+    axis.title = element_text(size = 12)
+  ) +
+  scale_x_continuous(limits = c(27, NA), breaks = seq(26, 40, by = 2)) +
+  scale_y_continuous(limits = c(-26.2, NA), breaks = seq(-28, 11, by = 0.5)) 
+  
+
+  
+p5 <-  
+  ggplot(Litter_avg, aes(x = Bulk_C_mg_g_dw_start, y = MOM_delta_13C)) +
+  geom_smooth(method = "lm", se = TRUE, color = "#453781ff") +
+    stat_regline_equation(
+    aes(label = after_stat(paste(eq.label, rr.label, sep = "~~~"))),
+    label.x.npc = "left", label.y.npc = 0.3
+  ) +
+  geom_point(aes(shape = Treatment, color = Bulk_C_mg_g_dw_start),size = 3) +
+  scale_color_viridis_c() + 
+  scale_shape_manual(values = c("K" = 16, "R" = 15)) +
+  labs(
+    x = expression("SOC (mg C g dw soil "^{-1}*")"),
+    y = expression("δ"^{13}*"C  MAOC"),
+    title = ""
+  ) +
+  theme_minimal()+
+  theme(
+    legend.position = "none",
+    text = element_text(color = "black", family = "roboto"),
+    panel.grid = element_blank(),
+    axis.line = element_line(color = "black"),
+    axis.ticks.length = unit(-0.2, "cm"),
+    axis.text = element_text(colour = "black", size = 11, margin = margin(t = 5, r = 5, b = 5, l = 5)),
+    axis.ticks = element_line(color = "black"),
+    legend.text = element_text(size = 11),
+    axis.title = element_text(size = 12)
+  ) +
+  scale_x_continuous(limits = c(27, NA), breaks = seq(26, 40, by = 2)) +
+  scale_y_continuous(limits = c(-26.2, -24.5), breaks = seq(-28, 11, by = 0.5))     
+  
+
+p6 <-  
+  ggplot(Litter_avg, aes(x = Bulk_C_mg_g_dw_start, y = POM_delta_13C)) +
+  geom_smooth(method = "lm", se = TRUE, color = "#453781ff") +
+    stat_regline_equation(
+    aes(label = after_stat(paste(eq.label, rr.label, sep = "~~~"))),
+    label.x.npc = "left", label.y.npc = 0.45
+  ) +
+  geom_point(aes(shape = Treatment, color = Bulk_C_mg_g_dw_start),size = 3) +
+  scale_color_viridis_c() + 
+  scale_shape_manual(values = c("K" = 16, "R" = 15)) +
+  labs(
+    x = expression("SOC (mg C g dw soil "^{-1}*")"),
+    y = expression("δ"^{13}*"C  POC"),
+    title = ""
+  ) +
+  theme_minimal()+
+  theme(
+    legend.position = "none",
+    text = element_text(color = "black", family = "roboto"),
+    panel.grid = element_blank(),
+    axis.line = element_line(color = "black"),
+    axis.ticks.length = unit(-0.2, "cm"),
+    axis.text = element_text(colour = "black", size = 11, margin = margin(t = 5, r = 5, b = 5, l = 5)),
+    axis.ticks = element_line(color = "black"),
+    legend.text = element_text(size = 11),
+    axis.title = element_text(size = 12)
+  ) +
+  scale_x_continuous(limits = c(27, NA), breaks = seq(26, 40, by = 2)) +
+  scale_y_continuous(limits = c(-28.8, NA), breaks = seq(-29, 11, by = 0.5))   
+  
+
+(p1+ p2) / (p3 + p4) / (p5 + p6)
+ggsave("Correlation_plots_SI_1.png", width = 7, height = 9, dpi = 300) 
+
+```
+
+
+#Two-way ANOVA CO2 
+```{r}
+
+
+final_cumsum_CO2_13C <- final_cumsum_CO2_13C %>%
+  mutate(
+    Treatment = case_when(
+      str_ends(ID, "K") ~ "K",
+      str_ends(ID, "R") ~ "R"
+    ),
+    Position = str_sub(ID, 1, 1) # extract the first letter
+  ) %>%
+  mutate(
+    Treatment = factor(Treatment),
+    Position = factor(Position) # optional, make it a factor too
+  )
+
+###Two-way ANOVA
+# Response variable: CO2 (numeric)
+# Two factors: Treatment (K, R) and Position (8 levels)
+
+#Total CO2
+anova_model <- aov(CO2_from_total_cumsum ~ Treatment * Position, 
+                   data = final_cumsum_CO2_13C)
+# ANOVA table
+summary(anova_model)
+# Treatment: ns (p = 0.626) → no overall treatment effect.
+# Position: *** (p < 0.001) → strong effect of Position.
+# Treatment × Position: *** (p < 0.001) → very strong interaction → the effect of treatment depends on position.
+# Normality test
+shapiro.test(residuals(anova_model)) #p = 0.16 → residuals are normally distributed
+# Homogeneity of variance
+leveneTest(CO2_from_total_cumsum ~ Treatment * Position, 
+                   data = final_cumsum_CO2_13C) #p = 0.6922 → equal variances across groups.
+# pairwise comparisons of Treatment within each Position
+emm <- emmeans(anova_model, ~ Treatment | Position)
+pairs(emm)
+# A, B, C, F, G → ns (p > 0.1), no clear treatment effect.
+# D → R > K (estimate = –9.07, p = 0.010).
+# E → R > K (estimate = –9.24, p = 0.009).
+# H → K > R (estimate = +17.23, p < 0.001, very strong).
+
+
+#Litter-derived CO2
+anova_model <- aov(CO2_from_litter_cumsum ~ Treatment * Position, 
+                   data = final_cumsum_CO2_13C)
+# ANOVA table
+summary(anova_model)
+# Treatment: ns (p = 0.27) → no main effect.
+# Position: *** (p < 0.001) → strong effect of position.
+# Interaction (Treatment × Position): * (p = 0.027) → significant → the effect of treatment depends on position.
+# Normality test
+shapiro.test(residuals(anova_model)) #p = 0.52 → residuals are normally distributed
+# Homogeneity of variance
+leveneTest(CO2_from_litter_cumsum ~ Treatment * Position, 
+           data = final_cumsum_CO2_13C) #p = 0.86 → variances are equal across groups.
+# pairwise comparisons of Treatment within each Position
+emm <- emmeans(anova_model, ~ Treatment | Position)
+pairs(emm)
+# Position A: K > R (estimate = 5.6), but only marginal (p = 0.077).
+# Position B, C, E, F, G: no significant differences (all p > 0.2).
+# Position D: R > K (estimate = –6.5, p = 0.042) → significant
+# Position H: K > R (estimate = 9.0, p = 0.005) → highly significant.
+
+
+
+#Soil-derived CO2
+anova_model <- aov(CO2_from_soil_cumsum ~ Treatment * Position, 
+                   data = final_cumsum_CO2_13C)
+# ANOVA table
+summary(anova_model)
+# Treatment: ns (p = 0.49) → no overall treatment effect.
+# Position: *** (p < 0.001) → strong effect of position.
+# Treatment × Position: ** (p < 0.001) → significant interaction again → the effect of treatment depends on position.
+# Normality test
+shapiro.test(residuals(anova_model)) #p = 0.059 → residuals are not significantly different from normal (borderline, but acceptable).
+# Homogeneity of variance
+leveneTest(CO2_from_soil_cumsum ~ Treatment * Position, 
+                   data = final_cumsum_CO2_13C) #p = 0.3609 → equal variances across groups
+# pairwise comparisons of Treatment within each Position
+emm <- emmeans(anova_model, ~ Treatment | Position)
+pairs(emm)
+# Position A: K < R (estimate = –4.9), borderline (p = 0.058) → trend but not significant.
+# Position B: ns (p = 0.40).
+# Position C: K > R (estimate = +4.8), borderline (p = 0.063).
+# Position D: ns (p = 0.31).
+# Position E: R > K (estimate = –5.6, p = 0.031) → significant.
+# Position F: ns (p = 0.12).
+# Position G: ns (p = 0.22).
+# Position H: K > R (estimate = +8.2, p = 0.002) → highly significant.
+
+
+```
+
+
+#Two-way ANOVA MAOC, POC and MAOC formation efficiency#  
+```{r}
+
+Litter_derived <- Litter_derived %>%
+  mutate(
+    Treatment = case_when(
+      str_ends(`Plot ID`, "K") ~ "K",
+      str_ends(`Plot ID`, "R") ~ "R"
+    ),
+    Position = str_sub(`Plot ID`, 1, 1) # extract the first letter
+  ) %>%
+  mutate(
+    Treatment = factor(Treatment),
+    Position = factor(Position) # optional, make it a factor too
+  )
+
+###Two-way ANOVA
+
+#Total litter-derived MAOC
+anova_model <- aov(`Litter derived MOM mg C g dw-1` ~ Treatment * Position, 
+                   data = Litter_derived)
+# ANOVA table
+summary(anova_model)
+#Treatment: F(1,80) = 27.6, p < 0.001 → strong treatment effect.
+#Position: F(7,80) = 12.6, p < 0.001 → strong position effect.
+#Treatment × Position: F(7,80) = 4.38, p < 0.001 → significant interaction.
+# Normality test
+shapiro.test(residuals(anova_model)) #p = 0.0024 → significant deviation from normality
+qqnorm(residuals(anova_model))
+qqline(residuals(anova_model))
+hist(residuals(anova_model))
+#Sometimes Shapiro flags small deviations that are not serious in practice, like here
+# Homogeneity of variance
+leveneTest(`Litter derived MOM mg C g dw-1` ~ Treatment * Position, 
+                   data = Litter_derived) #p = 0.658 → variances are equal
+# pairwise comparisons of Treatment within each Position
+emm <- emmeans(anova_model, ~ Treatment | Position)
+pairs(emm)
+
+
+
+#litter-derived POC
+anova_model <- aov(`Litter derived POM mg C g dw-1` ~ Treatment * Position, 
+                   data = Litter_derived)
+# ANOVA table
+summary(anova_model)
+# Treatment: F(1,80) = 11.765, p = 0.000957 → significant effect of treatment (not “ns”).
+#Position: F(7,80) = 11.653, p < 0.001 → strong significant effect of position.
+#Treatment × Position interaction: F(7,80) = 1.382, p = 0.224 → no significant interaction.
+# Normality test
+shapiro.test(residuals(anova_model)) #p = 0.087, which means the residuals are reasonably normal
+# Homogeneity of variance
+leveneTest(`Litter derived POM mg C g dw-1` ~ Treatment * Position, 
+           data = Litter_derived) #p = 0.2897 → assumption met → equal variances across groups.
+# pairwise comparisons of Treatment within each Position
+emmeans(anova_model, "Position")
+emmeans(anova_model, "Treatment")
+
+TukeyHSD(anova_model, "Position")
+TukeyHSD(anova_model, "Treatment")
+
+
+
+#MAOC formation efficiency 
+anova_model <- aov(MAOM_formation_efficiency ~ Treatment * Position, 
+                   data = Litter_derived)
+# ANOVA table
+summary(anova_model)
+# Treatment: F(1,80) = 30.7, p < 0.001 → very strong treatment effect.
+#Position: F(7,80) = 16.6, p < 0.001 → strong position effect.
+#Treatment × Position: F(7,80) = 3.75, p = 0.00147 → significant interaction.
+# Normality test
+shapiro.test(residuals(anova_model)) #p = 0.076 → not significant → residuals are reasonably normal
+# Homogeneity of variance
+leveneTest(MAOM_formation_efficiency ~ Treatment * Position, 
+           data = Litter_derived) #p = 0.638 → variances are equal
+# pairwise comparisons of Treatment within each Position
+emm <- emmeans(anova_model, ~ Treatment | Position)
+pairs(emm)
+```
+
+
+
+#Water filled pore space - linear-mixed effect model#
+```{r}
+#Import bulk density 
+
+file_path_WRC <- "xxx/Bulk_density.xlsx"
+bulk_density <- read_excel(file_path_WRC)
+
+#Temperature and moisture 
+file_path_moisture_temp <- "xxx/All_logger_data.xlsx"
+moisture <- read_excel(file_path_moisture_temp, sheet = "VWC", range = cell_cols(1:14))
+temp <- read_excel(file_path_moisture_temp, sheet = "Temp", range = cell_cols(1:14))
+
+
+particle_density <- 2.65
+bulk_density$porosity <- 1 - (bulk_density$Bulk_density_g_cm3 / particle_density)
+
+moisture_long <- moisture %>%
+  pivot_longer(-Date, names_to = "Plot_ID", values_to = "theta_v")
+
+
+moisture_wfps <- moisture_long %>%
+  left_join(bulk_density, by = "Plot_ID") %>%
+  mutate(
+    porosity = 1 - (Bulk_density_g_cm3 / particle_density),
+    WFPS = theta_v / porosity *100
+  )
+
+
+moisture_first_year <- moisture_wfps %>%
+  filter(as.Date(Date) >= as.Date("2023-06-26") & as.Date(Date) <= as.Date("2023-10-24"))
+
+moisture_first_year %>%
+  filter(!is.na(theta_v)) %>%
+  count(Plot_ID, name = "n_measurements")
+
+moisture_first_year <- moisture_first_year %>%
+  #filter(!Plot_ID == "B-K") %>%
+  mutate(
+    Treatment = case_when(
+      str_ends(`Plot_ID`, "K") ~ "K",
+      str_ends(`Plot_ID`, "R") ~ "R"
+    ),
+    Position = str_sub(`Plot_ID`, 1, 1) # extract the first letter
+  ) %>%
+  mutate(
+    Treatment = factor(Treatment),
+    Position = factor(Position) # optional, make it a factor too
+  )
+
+
+
+model1 <- lmer(WFPS ~ Plot_ID + (1 | Date), 
+              data = moisture_first_year)
+
+model2 <- lmer(WFPS ~ Position + Treatment + (1 | Date), 
+              data = moisture_first_year)
+
+model3 <- lmer(WFPS ~ Position + Treatment + (1 | Date) + (1 | Plot_ID), 
+               data = moisture_first_year)
+
+model4 <- lmer(WFPS ~ Treatment + (1 | Date) + (1 | Position), 
+               data = moisture_first_year)
+
+
+
+res1 <- residuals(model1)
+qqnorm(res1)
+qqline(res1, col = "red", lwd = 2)
+
+res2 <- residuals(model2)
+qqnorm(res2)
+qqline(res2, col = "red", lwd = 2)
+
+res3 <- residuals(model3)
+qqnorm(res3)
+qqline(res3, col = "red", lwd = 2)
+
+res4 <- residuals(model4)
+qqnorm(res4)
+qqline(res4, col = "red", lwd = 2)
+
+AIC(model1, model2, model3, model4)
+BIC(model1, model2, model3, model4)
+
+anova(model1, model2, model3, model4)
+
+#model3 is best 
+summary(model3)
+#results from summary. 
+
+
+
+# Estimated marginal means for Treatment
+emm_treatment <- emmeans(model3, ~ Treatment, lmer.df = "asymptotic")
+plot_treatment <- emmip(model3, Treatment ~ 1, lmer.df = "asymptotic", CIs = TRUE) +
+  labs(y = "Estimated WFPS", x = "Treatment") +
+  theme_minimal(base_size = 14)
+plot_treatment
+summary(emm_treatment)
+# Pairwise comparison between treatments
+contrast(emm_treatment, method = "pairwise") %>% summary(infer = c(TRUE, TRUE))
+# Turn results into a data frame
+emm_table <- as.data.frame(summary(emm_treatment))
+contrast_table <- as.data.frame(contrast(emm_treatment, method = "pairwise"))
+emm_table
+contrast_table
+
+
+
+# Estimated marginal means for Treatment and position
+emm_pos_treat <- emmeans(model3, ~ Position * Treatment, lmer.df = "asymptotic")
+summary(emm_pos_treat)
+emmip(model3, Treatment ~ Position, lmer.df = "asymptotic", CIs = TRUE) +
+  labs(y = "Estimated WFPS", x = "Position") +
+  theme_minimal(base_size = 14)
+# Compare treatments (K vs R) within each Position
+contrast_pos_treat <- contrast(emm_pos_treat, 
+                               method = "pairwise", 
+                               by = "Position") %>%
+                      summary(infer = c(TRUE, TRUE))
+contrast_pos_treat
+
+
+```
+
+
